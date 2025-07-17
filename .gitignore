@@ -39,3 +39,8 @@ next-env.d.ts
 # next-sitemap
 sitemap.xml
 sitemap-*.xml
+.idea
+package-lock.json
+public/sw.js
+public/workbox-*
+src/lib/runtime.ts
