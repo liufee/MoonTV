@@ -465,6 +465,27 @@ function PlayPageClient() {
 
   // 进入页面时直接获取全部源信息
   useEffect(() => {
+    const fetchSourceDetail = async (
+      source: string,
+      id: string
+    ): Promise<SearchResult[]> => {
+      try {
+        const detailResponse = await fetch(
+          `/api/detail?source=${source}&id=${id}`
+        );
+        if (!detailResponse.ok) {
+          throw new Error('获取视频详情失败');
+        }
+        const detailData = (await detailResponse.json()) as SearchResult;
+        setAvailableSources([detailData]);
+        return [detailData];
+      } catch (err) {
+        console.error('获取视频详情失败:', err);
+        return [];
+      } finally {
+        setSourceSearchLoading(false);
+      }
+    };
     const fetchSourcesData = async (query: string): Promise<SearchResult[]> => {
       // 根据搜索词获取全部源信息
       try {
@@ -489,24 +510,6 @@ function PlayPageClient() {
                 (searchType === 'movie' && result.episodes.length === 1)
               : true)
         );
-        if (results.length !== 0) {
-          setAvailableSources(results);
-          return results;
-        }
-
-        // 未获取到任何内容，fallback 使用 source + id
-        if (!currentSource || !currentId) {
-          return [];
-        }
-
-        const detailResponse = await fetch(
-          `/api/detail?source=${currentSource}&id=${currentId}`
-        );
-        if (!detailResponse.ok) {
-          throw new Error('获取视频详情失败');
-        }
-        const detailData = (await detailResponse.json()) as SearchResult;
-        results.push(detailData);
         setAvailableSources(results);
         return results;
       } catch (err) {
@@ -532,7 +535,16 @@ function PlayPageClient() {
           : '🔍 正在搜索播放源...'
       );
 
-      const sourcesInfo = await fetchSourcesData(searchTitle || videoTitle);
+      let sourcesInfo = await fetchSourcesData(searchTitle || videoTitle);
+      if (
+        currentSource &&
+        currentId &&
+        !sourcesInfo.some(
+          (source) => source.source === currentSource && source.id === currentId
+        )
+      ) {
+        sourcesInfo = await fetchSourceDetail(currentSource, currentId);
+      }
       if (sourcesInfo.length === 0) {
         setError('未找到匹配结果');
         setLoading(false);
@@ -1497,7 +1509,7 @@ function PlayPageClient() {
           </div>
 
           <div
-            className={`grid gap-4 lg:h-[500px] xl:h-[650px] 2xl:h-[800px] transition-all duration-300 ease-in-out ${
+            className={`grid gap-4 lg:h-[500px] xl:h-[650px] 2xl:h-[750px] transition-all duration-300 ease-in-out ${
               isEpisodeSelectorCollapsed
                 ? 'grid-cols-1'
                 : 'grid-cols-1 md:grid-cols-4'
