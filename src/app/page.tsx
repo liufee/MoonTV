@@ -317,7 +317,7 @@ function HomeClient() {
                 提示
               </h3>
               <button
-                onClick={() => handleCloseAnnouncement(announcement)}
+                onClick={() => handleCloseAnnouncement('')}
                 className='text-gray-400 hover:text-gray-500 dark:text-gray-500 dark:hover:text-white transition-colors'
                 aria-label='关闭'
               ></button>
@@ -331,7 +331,7 @@ function HomeClient() {
               </div>
             </div>
             <button
-              onClick={() => handleCloseAnnouncement(announcement)}
+              onClick={() => handleCloseAnnouncement('')}
               className='w-full rounded-lg bg-gradient-to-r from-green-600 to-green-700 px-4 py-3 text-white font-medium shadow-md hover:shadow-lg hover:from-green-700 hover:to-green-800 dark:from-green-600 dark:to-green-700 dark:hover:from-green-700 dark:hover:to-green-800 transition-all duration-300 transform hover:-translate-y-0.5'
             >
               我知道了
