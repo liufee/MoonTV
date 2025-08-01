@@ -16,8 +16,8 @@ export async function middleware(request: NextRequest) {
 
   if (!process.env.PASSWORD) {
     // 如果没有设置密码，重定向到警告页面
-    const warningUrl = new URL('/warning', request.url);
-    return NextResponse.redirect(warningUrl);
+    //const warningUrl = new URL('/warning', request.url);
+    //return NextResponse.redirect(warningUrl);
   }
 
   // 从cookie获取认证信息
