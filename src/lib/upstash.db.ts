@@ -1,6 +1,6 @@
 /* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import { createClient, RedisClientType } from 'redis';
+import { Redis } from '@upstash/redis';
 
 import { AdminConfig } from './admin.types';
 import { Favorite, IStorage, PlayRecord, SkipConfig } from './types';
@@ -17,7 +17,7 @@ function ensureStringArray(value: any[]): string[] {
   return value.map((item) => String(item));
 }
 
-// 添加Redis操作重试包装器
+// 添加Upstash Redis操作重试包装器
 async function withRetry<T>(
   operation: () => Promise<T>,
   maxRetries = 3
@@ -32,27 +32,17 @@ async function withRetry<T>(
         err.message?.includes('ECONNREFUSED') ||
         err.message?.includes('ENOTFOUND') ||
         err.code === 'ECONNRESET' ||
-        err.code === 'EPIPE';
+        err.code === 'EPIPE' ||
+        err.name === 'UpstashError';
 
       if (isConnectionError && !isLastAttempt) {
         console.log(
-          `Redis operation failed, retrying... (${i + 1}/${maxRetries})`
+          `Upstash Redis operation failed, retrying... (${i + 1}/${maxRetries})`
         );
         console.error('Error:', err.message);
 
         // 等待一段时间后重试
         await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1)));
-
-        // 尝试重新连接
-        try {
-          const client = getRedisClient();
-          if (!client.isOpen) {
-            await client.connect();
-          }
-        } catch (reconnectErr) {
-          console.error('Failed to reconnect:', reconnectErr);
-        }
-
         continue;
       }
 
@@ -63,11 +53,11 @@ async function withRetry<T>(
   throw new Error('Max retries exceeded');
 }
 
-export class RedisStorage implements IStorage {
-  private client: RedisClientType;
+export class UpstashRedisStorage implements IStorage {
+  private client: Redis;
 
   constructor() {
-    this.client = getRedisClient();
+    this.client = getUpstashRedisClient();
   }
 
   // ---------- 播放记录 ----------
@@ -82,7 +72,7 @@ export class RedisStorage implements IStorage {
     const val = await withRetry(() =>
       this.client.get(this.prKey(userName, key))
     );
-    return val ? (JSON.parse(val) as PlayRecord) : null;
+    return val ? (val as PlayRecord) : null;
   }
 
   async setPlayRecord(
@@ -90,9 +80,7 @@ export class RedisStorage implements IStorage {
     key: string,
     record: PlayRecord
   ): Promise<void> {
-    await withRetry(() =>
-      this.client.set(this.prKey(userName, key), JSON.stringify(record))
-    );
+    await withRetry(() => this.client.set(this.prKey(userName, key), record));
   }
 
   async getAllPlayRecords(
@@ -101,17 +89,16 @@ export class RedisStorage implements IStorage {
     const pattern = `u:${userName}:pr:*`;
     const keys: string[] = await withRetry(() => this.client.keys(pattern));
     if (keys.length === 0) return {};
-    const values = await withRetry(() => this.client.mGet(keys));
+
     const result: Record<string, PlayRecord> = {};
-    keys.forEach((fullKey: string, idx: number) => {
-      const raw = values[idx];
-      if (raw) {
-        const rec = JSON.parse(raw) as PlayRecord;
+    for (const fullKey of keys) {
+      const value = await withRetry(() => this.client.get(fullKey));
+      if (value) {
         // 截取 source+id 部分
         const keyPart = ensureString(fullKey.replace(`u:${userName}:pr:`, ''));
-        result[keyPart] = rec;
+        result[keyPart] = value as PlayRecord;
       }
-    });
+    }
     return result;
   }
 
@@ -128,7 +115,7 @@ export class RedisStorage implements IStorage {
     const val = await withRetry(() =>
       this.client.get(this.favKey(userName, key))
     );
-    return val ? (JSON.parse(val) as Favorite) : null;
+    return val ? (val as Favorite) : null;
   }
 
   async setFavorite(
@@ -137,7 +124,7 @@ export class RedisStorage implements IStorage {
     favorite: Favorite
   ): Promise<void> {
     await withRetry(() =>
-      this.client.set(this.favKey(userName, key), JSON.stringify(favorite))
+      this.client.set(this.favKey(userName, key), favorite)
     );
   }
 
@@ -145,16 +132,15 @@ export class RedisStorage implements IStorage {
     const pattern = `u:${userName}:fav:*`;
     const keys: string[] = await withRetry(() => this.client.keys(pattern));
     if (keys.length === 0) return {};
-    const values = await withRetry(() => this.client.mGet(keys));
+
     const result: Record<string, Favorite> = {};
-    keys.forEach((fullKey: string, idx: number) => {
-      const raw = values[idx];
-      if (raw) {
-        const fav = JSON.parse(raw) as Favorite;
+    for (const fullKey of keys) {
+      const value = await withRetry(() => this.client.get(fullKey));
+      if (value) {
         const keyPart = ensureString(fullKey.replace(`u:${userName}:fav:`, ''));
-        result[keyPart] = fav;
+        result[keyPart] = value as Favorite;
       }
-    });
+    }
     return result;
   }
 
@@ -212,7 +198,7 @@ export class RedisStorage implements IStorage {
       this.client.keys(playRecordPattern)
     );
     if (playRecordKeys.length > 0) {
-      await withRetry(() => this.client.del(playRecordKeys));
+      await withRetry(() => this.client.del(...playRecordKeys));
     }
 
     // 删除收藏夹
@@ -221,7 +207,7 @@ export class RedisStorage implements IStorage {
       this.client.keys(favoritePattern)
     );
     if (favoriteKeys.length > 0) {
-      await withRetry(() => this.client.del(favoriteKeys));
+      await withRetry(() => this.client.del(...favoriteKeys));
     }
 
     // 删除跳过片头片尾配置
@@ -230,7 +216,7 @@ export class RedisStorage implements IStorage {
       this.client.keys(skipConfigPattern)
     );
     if (skipConfigKeys.length > 0) {
-      await withRetry(() => this.client.del(skipConfigKeys));
+      await withRetry(() => this.client.del(...skipConfigKeys));
     }
   }
 
@@ -241,7 +227,7 @@ export class RedisStorage implements IStorage {
 
   async getSearchHistory(userName: string): Promise<string[]> {
     const result = await withRetry(() =>
-      this.client.lRange(this.shKey(userName), 0, -1)
+      this.client.lrange(this.shKey(userName), 0, -1)
     );
     // 确保返回的都是字符串类型
     return ensureStringArray(result as any[]);
@@ -250,17 +236,17 @@ export class RedisStorage implements IStorage {
   async addSearchHistory(userName: string, keyword: string): Promise<void> {
     const key = this.shKey(userName);
     // 先去重
-    await withRetry(() => this.client.lRem(key, 0, ensureString(keyword)));
+    await withRetry(() => this.client.lrem(key, 0, ensureString(keyword)));
     // 插入到最前
-    await withRetry(() => this.client.lPush(key, ensureString(keyword)));
+    await withRetry(() => this.client.lpush(key, ensureString(keyword)));
     // 限制最大长度
-    await withRetry(() => this.client.lTrim(key, 0, SEARCH_HISTORY_LIMIT - 1));
+    await withRetry(() => this.client.ltrim(key, 0, SEARCH_HISTORY_LIMIT - 1));
   }
 
   async deleteSearchHistory(userName: string, keyword?: string): Promise<void> {
     const key = this.shKey(userName);
     if (keyword) {
-      await withRetry(() => this.client.lRem(key, 0, ensureString(keyword)));
+      await withRetry(() => this.client.lrem(key, 0, ensureString(keyword)));
     } else {
       await withRetry(() => this.client.del(key));
     }
@@ -284,13 +270,11 @@ export class RedisStorage implements IStorage {
 
   async getAdminConfig(): Promise<AdminConfig | null> {
     const val = await withRetry(() => this.client.get(this.adminConfigKey()));
-    return val ? (JSON.parse(val) as AdminConfig) : null;
+    return val ? (val as AdminConfig) : null;
   }
 
   async setAdminConfig(config: AdminConfig): Promise<void> {
-    await withRetry(() =>
-      this.client.set(this.adminConfigKey(), JSON.stringify(config))
-    );
+    await withRetry(() => this.client.set(this.adminConfigKey(), config));
   }
 
   // ---------- 跳过片头片尾配置 ----------
@@ -306,7 +290,7 @@ export class RedisStorage implements IStorage {
     const val = await withRetry(() =>
       this.client.get(this.skipConfigKey(userName, source, id))
     );
-    return val ? (JSON.parse(val) as SkipConfig) : null;
+    return val ? (val as SkipConfig) : null;
   }
 
   async setSkipConfig(
@@ -316,10 +300,7 @@ export class RedisStorage implements IStorage {
     config: SkipConfig
   ): Promise<void> {
     await withRetry(() =>
-      this.client.set(
-        this.skipConfigKey(userName, source, id),
-        JSON.stringify(config)
-      )
+      this.client.set(this.skipConfigKey(userName, source, id), config)
     );
   }
 
@@ -346,7 +327,7 @@ export class RedisStorage implements IStorage {
     const configs: { [key: string]: SkipConfig } = {};
 
     // 批量获取所有配置
-    const values = await withRetry(() => this.client.mGet(keys));
+    const values = await withRetry(() => this.client.mget(keys));
 
     keys.forEach((key, index) => {
       const value = values[index];
@@ -355,7 +336,7 @@ export class RedisStorage implements IStorage {
         const match = key.match(/^u:.+?:skip:(.+)$/);
         if (match) {
           const sourceAndId = match[1];
-          configs[sourceAndId] = JSON.parse(value as string) as SkipConfig;
+          configs[sourceAndId] = value as SkipConfig;
         }
       }
     });
@@ -364,68 +345,34 @@ export class RedisStorage implements IStorage {
   }
 }
 
-// 单例 Redis 客户端
-function getRedisClient(): RedisClientType {
-  const globalKey = Symbol.for('__MOONTV_REDIS_CLIENT__');
-  let client: RedisClientType | undefined = (global as any)[globalKey];
+// 单例 Upstash Redis 客户端
+function getUpstashRedisClient(): Redis {
+  const globalKey = Symbol.for('__MOONTV_UPSTASH_REDIS_CLIENT__');
+  let client: Redis | undefined = (global as any)[globalKey];
 
   if (!client) {
-    const url = process.env.REDIS_URL;
-    if (!url) {
-      throw new Error('REDIS_URL env variable not set');
+    const upstashUrl = process.env.UPSTASH_URL;
+    const upstashToken = process.env.UPSTASH_TOKEN;
+
+    if (!upstashUrl || !upstashToken) {
+      throw new Error(
+        'UPSTASH_URL and UPSTASH_TOKEN env variables must be set'
+      );
     }
 
-    // 创建客户端，配置重连策略
-    client = createClient({
-      url,
-      socket: {
-        // 重连策略：指数退避，最大30秒
-        reconnectStrategy: (retries: number) => {
-          console.log(`Redis reconnection attempt ${retries + 1}`);
-          if (retries > 10) {
-            console.error('Redis max reconnection attempts exceeded');
-            return false; // 停止重连
-          }
-          return Math.min(1000 * Math.pow(2, retries), 30000); // 指数退避，最大30秒
-        },
-        connectTimeout: 10000, // 10秒连接超时
-        // 设置no delay，减少延迟
-        noDelay: true,
+    // 创建 Upstash Redis 客户端
+    client = new Redis({
+      url: upstashUrl,
+      token: upstashToken,
+      // 可选配置
+      retry: {
+        retries: 3,
+        backoff: (retryCount: number) =>
+          Math.min(1000 * Math.pow(2, retryCount), 30000),
       },
-      // 添加其他配置
-      pingInterval: 30000, // 30秒ping一次，保持连接活跃
     });
 
-    // 添加错误事件监听
-    client.on('error', (err) => {
-      console.error('Redis client error:', err);
-    });
-
-    client.on('connect', () => {
-      console.log('Redis connected');
-    });
-
-    client.on('reconnecting', () => {
-      console.log('Redis reconnecting...');
-    });
-
-    client.on('ready', () => {
-      console.log('Redis ready');
-    });
-
-    // 初始连接，带重试机制
-    const connectWithRetry = async () => {
-      try {
-        await client!.connect();
-        console.log('Redis connected successfully');
-      } catch (err) {
-        console.error('Redis initial connection failed:', err);
-        console.log('Will retry in 5 seconds...');
-        setTimeout(connectWithRetry, 5000);
-      }
-    };
-
-    connectWithRetry();
+    console.log('Upstash Redis client created successfully');
 
     (global as any)[globalKey] = client;
   }
