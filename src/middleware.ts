@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
+//import { getAuthInfoFromCookie } from '@/lib/auth';
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -12,6 +12,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
   return NextResponse.next();
+  /*
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
 
   if (!process.env.PASSWORD) {
@@ -95,8 +96,10 @@ async function verifySignature(
     console.error('签名验证失败:', error);
     return false;
   }
+   */
 }
 
+/*
 // 处理认证失败的情况
 function handleAuthFailure(
   request: NextRequest,
@@ -113,7 +116,7 @@ function handleAuthFailure(
   const fullUrl = `${pathname}${request.nextUrl.search}`;
   loginUrl.searchParams.set('redirect', fullUrl);
   return NextResponse.redirect(loginUrl);
-}
+}*/
 
 // 判断是否需要跳过认证的路径
 function shouldSkipAuth(pathname: string): boolean {
